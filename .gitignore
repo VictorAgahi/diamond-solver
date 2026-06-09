@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.DS_Store
+visualizer.html
+visualize_dfs.py
+parse_blueprints.ipynb
+reflexion_algo.ipynb
+visualize_blueprints.ipynb
