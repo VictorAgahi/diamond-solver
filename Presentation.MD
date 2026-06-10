@@ -1,6 +1,6 @@
 # Presentation de l'algo
 
-Ce document explique pas a pas le fonctionnement de [submission.py](submission.py), depuis le probleme de base jusqu'a l'extension avec les diamants. L'objectif est que quelqu'un qui decouvre le code puisse comprendre a quoi sert chaque bloc et pourquoi l'algorithme fonctionne.
+Ce document explique pas a pas le fonctionnement du code, depuis le probleme de base jusqu'a l'extension avec les diamants. L'objectif est que quelqu'un qui decouvre le code puisse comprendre a quoi sert chaque bloc et pourquoi l'algorithme fonctionne.
 
 ## 1. Rappel du probleme de base
 
@@ -35,10 +35,10 @@ flowchart LR
 
 Le programme est organise en 4 blocs principaux:
 
-1. [Blueprint](submission.py#L8) decrit les couts de fabrication.
-2. [State](submission.py#L48) decrit tout l'etat courant de la recherche.
-3. [DiamondSolver](submission.py#L154) explore les possibilites.
-4. [GameRunner](submission.py#L214) et [main](submission.py#L227) lancent les calculs.
+1. [Blueprint](src/models/blueprint.py) decrit les couts de fabrication.
+2. [State](src/models/state.py) decrit tout l'etat courant de la recherche.
+3. [DiamondSolver](src/solver/diamond_solver.py) explore les possibilites.
+4. [GameRunner](src/services/runner.py) et [main](src/api/main.py) lancent les calculs et exposent l'API.
 
 ```mermaid
 flowchart TD
@@ -52,7 +52,7 @@ flowchart TD
 
 ## 3. Le format d'entree
 
-Le parseur est tres simple. Il extrait tous les nombres d'une ligne avec une regex, puis instancie un [Blueprint](submission.py#L8).
+Le parseur est tres simple. Il extrait tous les nombres d'une ligne avec une regex, puis instancie un [Blueprint](src/models/blueprint.py).
 
 ```python
 @staticmethod
@@ -83,7 +83,7 @@ flowchart LR
 
 ## 4. Le modele de donnees Blueprint
 
-Le [Blueprint](submission.py#L8) contient maintenant 9 couts utiles en plus de l'ID.
+Le [Blueprint](src/models/blueprint.py) contient maintenant 9 couts utiles en plus de l'ID.
 
 ```python
 @dataclass(frozen=True)
@@ -141,7 +141,7 @@ flowchart TD
 
 ## 5. Le modele d'etat
 
-Le [State](submission.py#L48) contient tout ce qu'il faut pour representer une situation a un instant donne.
+Le [State](src/models/state.py) contient tout ce qu'il faut pour representer une situation a un instant donne.
 
 ```python
 @dataclass(frozen=True)
@@ -199,7 +199,7 @@ flowchart LR
 
 ## 6. Comment une minute est simulee
 
-La methode [next_state](submission.py#L79) est le coeur du simulateur.
+La methode [next_state](src/models/state.py) est le coeur du simulateur.
 
 ```python
 def next_state(
@@ -246,7 +246,7 @@ sequenceDiagram
 
 ## 7. Pourquoi on coupe les stocks inutiles
 
-Le solver ne garde pas tous les etats possibles. Il limite les stocks qu'il stocke dans le cache grace a [get_capped_resources](submission.py#L101).
+Le solver ne garde pas tous les etats possibles. Il limite les stocks qu'il stocke dans le cache grace a [get_capped_resources](src/models/state.py).
 
 ```python
 def get_capped_resources(self, blueprint: Blueprint) -> Tuple[int, int, int, int]:
@@ -273,7 +273,7 @@ flowchart TD
 
 ## 8. Le cache de dominance
 
-La classe [StateCache](submission.py#L112) compare les etats qui ont le meme profil de robots.
+La classe [StateCache](src/solver/cache.py) compare les etats qui ont le meme profil de robots.
 
 ```python
 state_key = (
@@ -307,7 +307,7 @@ Le cache garde seulement la meilleure version connue pour cette combinaison de r
 
 ## 9. Le solveur diamonds
 
-Le vrai moteur est [DiamondSolver](submission.py#L154).
+Le vrai moteur est [DiamondSolver](src/solver/diamond_solver.py).
 
 ```python
 class DiamondSolver:
@@ -351,7 +351,7 @@ flowchart TD
 
 ## 10. L'ordre de decision
 
-La methode [_search](submission.py#L164) suit un ordre tres precis.
+La methode [_search](src/solver/diamond_solver.py) suit un ordre tres precis.
 
 ```python
 can_build_diamond = (
@@ -531,3 +531,34 @@ flowchart TD
     C --> D[Maximum de diamonds]
     D --> E[Score du blueprint]
 ```
+
+## 16. L'API et l'Interface
+
+L'architecture a evolue pour proposer une interface graphique et une API REST avec FastAPI.
+
+### Structure API (`src/api/main.py`)
+
+L'API FastAPI expose deux endpoints principaux:
+
+#### `GET /`
+- **Role** : Point d'entree de l'interface legacy (avant NextJS) si le fichier statique est present. Il sert a verifier que le serveur HTTP est bien vivant.
+- **Reponse** : Le contenu HTML de l'interface utilisateur ou un statut 404 si manquant.
+
+#### `POST /upload`
+- **Role** : Le coeur de l'interaction. Il accepte un fichier `seed.txt` via un formulaire `multipart/form-data`.
+- **Processus** : 
+  1. Verifie que le fichier termine bien par `.txt`.
+  2. Parse le contenu et s'assure que les blueprints sont valides (exactement 10 variables par ligne).
+  3. Orchestre l'algorithme via le `GameRunner`.
+- **Reponse** : Un JSON structur&eacute; contenant les deux scores calcul&eacute;s :
+```json
+{
+  "part1": 12345,
+  "part2": 67890
+}
+```
+En cas d'erreur (fichier corrompu), il retourne un code HTTP 400 (Bad Request) avec le message d'erreur precis (ex: `Error parsing line 1: Expected 10 integers`).
+
+### Interface Graphique (Next.js)
+
+Un frontend en React/Next.js (`frontend/src/app/page.tsx`) accompagne desormais l'application. Il permet a l'utilisateur de deposer en *Drag & Drop* le fichier `seed.txt` et affiche immediatement les scores recuperees par l'API FastAPI.

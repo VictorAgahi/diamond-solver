@@ -10,3 +10,19 @@ visualize_dfs.py
 parse_blueprints.ipynb
 reflexion_algo.ipynb
 visualize_blueprints.ipynb
+.pytest_cache/
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
