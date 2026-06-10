@@ -12,12 +12,19 @@ Le projet utilise une architecture propre séparant le backend algorithmique du 
 
 ## Installation & Démarrage
 
-### 1. Démarrer le Backend (FastAPI)
+### 1. Démarrer le Backend (FastAPI) avec `uv`
+
+Nous recommandons d'utiliser [uv](https://github.com/astral-sh/uv) pour une installation Python ultra-rapide.
 
 ```bash
-# S'assurer d'être à la racine du projet et que l'environnement virtuel est actif
+# Créer l'environnement virtuel avec uv
+uv venv
+
+# Activer l'environnement virtuel
 source .venv/bin/activate
-pip install fastapi uvicorn python-multipart
+
+# Installer les dépendances depuis requirements.txt
+uv pip install -r requirements.txt
 
 # Lancer l'API FastAPI
 uvicorn src.api.main:app --reload
