@@ -1,39 +1,58 @@
-from typing import Tuple
+from typing import Dict, Tuple
 from src.models.state import State
+from src.models.resource_pack import ResourcePack
 
 class StateCache:
+    """
+    State cache tracking evaluated configurations to prune dominated branches.
+    Adheres to Command-Query Separation (CQS) by naming state changes explicitly.
+    """
     def __init__(self):
-        self.visited = {}
+        # Maps robot counts at a specific time remaining to the best resource counts found so far.
+        self.visited: Dict[Tuple[int, ResourcePack], ResourcePack] = {}
 
-    def is_dominated(self, state: State, capped: Tuple[int, int, int, int]) -> bool:
-        capped_ore, capped_clay, capped_obsidian, capped_geode = capped
-        state_key = (
-            state.time,
-            state.ore_robots,
-            state.clay_robots,
-            state.obsidian_robots,
-            state.geode_robots,
-            state.diamond_robots,
-        )
+    def check_and_update_dominance(self, state: State, capped: ResourcePack) -> bool:
+        """
+        Checks if the current state is dominated by a previously visited state.
+        If it is not dominated, but dominates/improves on the cache, it updates the cache.
+        Returns True if the current state is dominated (should prune), False otherwise.
+        """
+        state_key = (state.time, state.robots)
 
         if state_key in self.visited:
-            prev_ore, prev_clay, prev_obs, prev_geode, prev_diamonds = self.visited[state_key]
+            prev = self.visited[state_key]
+            # Dominance rule check
             if (
-                capped_ore <= prev_ore
-                and capped_clay <= prev_clay
-                and capped_obsidian <= prev_obs
-                and capped_geode <= prev_geode
-                and state.diamonds <= prev_diamonds
+                capped.ore <= prev.ore
+                and capped.clay <= prev.clay
+                and capped.obsidian <= prev.obsidian
+                and capped.geode <= prev.geode
+                and state.resources.diamond <= prev.diamond
             ):
                 return True
+            
+            # Update cache if current state dominates the previous one
             if (
-                capped_ore >= prev_ore
-                and capped_clay >= prev_clay
-                and capped_obsidian >= prev_obs
-                and capped_geode >= prev_geode
-                and state.diamonds >= prev_diamonds
+                capped.ore >= prev.ore
+                and capped.clay >= prev.clay
+                and capped.obsidian >= prev.obsidian
+                and capped.geode >= prev.geode
+                and state.resources.diamond >= prev.diamond
             ):
-                self.visited[state_key] = (capped_ore, capped_clay, capped_obsidian, capped_geode, state.diamonds)
+                self.visited[state_key] = ResourcePack(
+                    ore=capped.ore,
+                    clay=capped.clay,
+                    obsidian=capped.obsidian,
+                    geode=capped.geode,
+                    diamond=state.resources.diamond
+                )
         else:
-            self.visited[state_key] = (capped_ore, capped_clay, capped_obsidian, capped_geode, state.diamonds)
+            # First visit to this robot configuration at this time limit
+            self.visited[state_key] = ResourcePack(
+                ore=capped.ore,
+                clay=capped.clay,
+                obsidian=capped.obsidian,
+                geode=capped.geode,
+                diamond=state.resources.diamond
+            )
         return False

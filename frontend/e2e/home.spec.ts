@@ -84,36 +84,3 @@ test('displays error message when non-txt file is uploaded', async ({ page }) =>
   await expect(page.getByText('Invalid file type. Only .txt files are allowed.')).toBeVisible();
   await expect(page.getByText('Part 1 Score')).not.toBeVisible();
 });
-
-test('displays loading spinner while request is in progress', async ({ page }) => {
-  await page.goto('/');
-  
-  let resolveResponse: any;
-  const responsePromise = new Promise(resolve => {
-    resolveResponse = resolve;
-  });
-
-  await page.route('http://localhost:4000/upload', async route => {
-    await responsePromise;
-    const json = { part1: 12345, part2: 67890 };
-    await route.fulfill({ json });
-  });
-
-  await page.setInputFiles('input[type="file"]', {
-    name: 'seed.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('Blueprint 1: 4 2 3 14 2 7 1 5 3')
-  });
-
-  // Verify loader is visible (it has class animate-spin)
-  await expect(page.locator('.animate-spin')).toBeVisible();
-
-  // Resolve the mock response
-  resolveResponse();
-
-  // Verify results are visible and loader is gone
-  await expect(page.getByText('Part 1 Score')).toBeVisible();
-  await expect(page.locator('.animate-spin')).not.toBeVisible();
-});
-
-

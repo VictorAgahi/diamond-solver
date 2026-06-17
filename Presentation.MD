@@ -1,6 +1,6 @@
 # Presentation de l'algo
 
-Ce document explique pas a pas le fonctionnement du code, depuis le probleme de base jusqu'a l'extension avec les diamants. L'objectif est que quelqu'un qui decouvre le code puisse comprendre a quoi sert chaque bloc et pourquoi l'algorithme fonctionne.
+Ce document sert de **support de présentation** pour l'architecture définitive du Diamond Solver. Il détaille l'implémentation de la logique métier, les optimisations algorithmiques clés (DFS, Pruning, Caching) et les bonnes pratiques appliquées (Clean Architecture, SOLID, Value Objects).
 
 ## 1. Rappel du probleme de base
 
@@ -81,24 +81,44 @@ flowchart LR
     D --> O[Un objet Blueprint complet]
 ```
 
-## 4. Le modele de donnees Blueprint
+## 4. Le modele de donnees Blueprint et ResourcePack
 
-Le [Blueprint](src/models/blueprint.py) contient maintenant 9 couts utiles en plus de l'ID.
+Le [Blueprint](src/models/blueprint.py) contient les informations de coût de fabrication. Pour éviter l'anti-pattern de *Primitive Obsession* (l'utilisation de variables primitives éparpillées) et les tuples magiques, une structure d'agrégation de type **Value Object** nommée `ResourcePack` (définie dans [resource_pack.py](src/models/resource_pack.py)) est utilisée.
+
+**Explication technique (Value Object & Immutabilité) :**
+En tant que *Value Object*, le `ResourcePack` regroupe le stock de ressources, le coût des robots et la capacité de production en une seule entité mathématique immuable. Cela simplifie drastiquement les calculs : au lieu de faire 5 opérations ligne par ligne, on effectue une seule opération mathématique élégante (`resources.subtract(cost).add(robots)`). Son immutabilité lui permet également d'être utilisé comme clé de hachage dans notre système de cache.
 
 ```python
-@dataclass(frozen=True)
-class Blueprint:
-    id: int
-    ore_robot_ore: int
-    clay_robot_ore: int
-    obsidian_robot_ore: int
-    obsidian_robot_clay: int
-    geode_robot_ore: int
-    geode_robot_obsidian: int
-    diamond_robot_geode: int
-    diamond_robot_clay: int
-    diamond_robot_obsidian: int
+class ResourcePack(NamedTuple):
+    ore: int = 0
+    clay: int = 0
+    obsidian: int = 0
+    geode: int = 0
+    diamond: int = 0
 ```
+
+Le [Blueprint](src/models/blueprint.py) utilise cette structure en encapsulant chaque coût dans un objet `ResourcePack` :
+
+```python
+class Blueprint:
+    __slots__ = ("id", "ore_robot_cost", "clay_robot_cost", "obsidian_robot_cost", "geode_robot_cost", "diamond_robot_cost")
+
+    def __init__(
+        self,
+        id: int,
+        ore_robot_ore: int,
+        ...
+    ):
+        self.id = id
+        self.ore_robot_cost = ResourcePack(ore=ore_robot_ore)
+        self.clay_robot_cost = ResourcePack(ore=clay_robot_ore)
+        self.obsidian_robot_cost = ResourcePack(ore=obsidian_robot_ore, clay=obsidian_robot_clay)
+        self.geode_robot_cost = ResourcePack(ore=geode_robot_ore, obsidian=geode_robot_obsidian)
+        self.diamond_robot_cost = ResourcePack(geode=diamond_robot_geode, clay=diamond_robot_clay, obsidian=diamond_robot_obsidian)
+```
+
+> [!NOTE]
+> Pour respecter le principe **Open/Closed (OCP)** et garantir la rétrocompatibilité des interfaces, le modèle expose les attributs primitifs (ex: `ore_robot_ore`, `clay_robot_ore`) sous forme de propriétés wrappers.
 
 ### Lecture humaine
 
@@ -114,22 +134,20 @@ On peut lire ce modele comme une table de couts:
 
 ### Les bornes maximales
 
-Le code ajoute aussi des proprietes de plafond:
+Le code calcule les plafonds de dépenses pour optimiser la recherche :
 
 ```python
 @property
 def max_ore_cost(self) -> int:
     return max(
-        self.ore_robot_ore,
-        self.clay_robot_ore,
-        self.obsidian_robot_ore,
-        self.geode_robot_ore
+        self.ore_robot_cost.ore,
+        self.clay_robot_cost.ore,
+        self.obsidian_robot_cost.ore,
+        self.geode_robot_cost.ore
     )
 ```
 
-Le meme principe existe pour clay, obsidian et geode.
-
-Ces maxima servent a eviter de construire des robots inutiles en trop grand nombre.
+Le meme principe existe pour clay, obsidian et geode. Ces maxima servent a eviter de construire des robots inutiles en trop grand nombre.
 
 ```mermaid
 flowchart TD
@@ -141,32 +159,22 @@ flowchart TD
 
 ## 5. Le modele d'etat
 
-Le [State](src/models/state.py) contient tout ce qu'il faut pour representer une situation a un instant donne.
+Le [State](src/models/state.py) représente de manière immuable la situation à un instant précis en regroupant les robots et les ressources dans des objets `ResourcePack`.
 
 ```python
-@dataclass(frozen=True)
-class State:
+class State(NamedTuple):
     time: int
-    ore_robots: int
-    clay_robots: int
-    obsidian_robots: int
-    geode_robots: int
-    diamond_robots: int
-    ore: int
-    clay: int
-    obsidian: int
-    geode: int
-    diamonds: int
+    robots: ResourcePack
+    resources: ResourcePack
     skipped: Tuple[bool, bool, bool, bool, bool]
 ```
 
 ### Signification
 
 - `time` = minutes restantes
-- `*_robots` = nombre de robots actifs pour chaque ressource
-- `ore`, `clay`, `obsidian`, `geode` = stocks courants
-- `diamonds` = score accumule, c'est la ressource qu'on veut maximiser
-- `skipped` = memoire des choix qu'on a decide de ne pas refaire tout de suite
+- `robots` = un `ResourcePack` contenant le nombre de robots actifs pour chaque ressource
+- `resources` = un `ResourcePack` contenant les stocks courants et le score de diamants accumulé
+- `skipped` = mémoire des choix qu'on a décidé de ne pas faire tout de suite
 
 ### L'etat initial
 
@@ -175,16 +183,8 @@ class State:
 def initial(max_time: int) -> 'State':
     return State(
         time=max_time,
-        ore_robots=1,
-        clay_robots=0,
-        obsidian_robots=0,
-        geode_robots=0,
-        diamond_robots=0,
-        ore=0,
-        clay=0,
-        obsidian=0,
-        geode=0,
-        diamonds=0,
+        robots=ResourcePack(ore=1),
+        resources=ResourcePack(),
         skipped=(False, False, False, False, False),
     )
 ```
@@ -199,28 +199,19 @@ flowchart LR
 
 ## 6. Comment une minute est simulee
 
-La methode [next_state](src/models/state.py) est le coeur du simulateur.
+La methode [next_state](src/models/state.py) effectue les transitions d'état en exploitant l'arithmétique propre de `ResourcePack`.
 
 ```python
 def next_state(
     self,
-    robot_diff: Tuple[int, int, int, int, int],
-    cost: Tuple[int, int, int, int],
+    robot_diff: ResourcePack,
+    cost: ResourcePack,
     skipped_next: Tuple[bool, bool, bool, bool, bool] = (False, False, False, False, False),
 ) -> 'State':
-    c_ore, c_clay, c_obs, c_geode = cost
     return State(
         time=self.time - 1,
-        ore_robots=self.ore_robots + robot_diff[0],
-        clay_robots=self.clay_robots + robot_diff[1],
-        obsidian_robots=self.obsidian_robots + robot_diff[2],
-        geode_robots=self.geode_robots + robot_diff[3],
-        diamond_robots=self.diamond_robots + robot_diff[4],
-        ore=self.ore - c_ore + self.ore_robots,
-        clay=self.clay - c_clay + self.clay_robots,
-        obsidian=self.obsidian - c_obs + self.obsidian_robots,
-        geode=self.geode - c_geode + self.geode_robots,
-        diamonds=self.diamonds + self.diamond_robots,
+        robots=self.robots.add(robot_diff),
+        resources=self.resources.subtract(cost).add(self.robots),
         skipped=skipped_next
     )
 ```
@@ -244,91 +235,31 @@ sequenceDiagram
     S->>N: activer le nouveau robot pour les minutes suivantes
 ```
 
-## 7. Pourquoi on coupe les stocks inutiles
+## 7. Le solveur diamonds (moteur de résolution)
 
-Le solver ne garde pas tous les etats possibles. Il limite les stocks qu'il stocke dans le cache grace a [get_capped_resources](src/models/state.py).
-
-```python
-def get_capped_resources(self, blueprint: Blueprint) -> Tuple[int, int, int, int]:
-    def cap(value: int, max_cost: int, robots: int) -> int:
-        return min(value, max(0, max_cost * self.time - robots * (self.time - 1)))
-```
-
-### Idee intuitive
-
-Si tu as deja beaucoup plus de ressources qu'il ne sera possible d'en depenser avant la fin, alors garder ce surplus ne change rien.
-
-Exemple:
-
-- si tu peux au maximum depenser 10 ore par minute
-- et qu'il reste peu de temps
-- alors avoir 500 ore n'apporte pas plus de possibilites que d'en avoir 50
-
-```mermaid
-flowchart TD
-    A[Stock actuel tres grand] --> B[Le cap le reduit]
-    B --> C[Etat plus compact]
-    C --> D[Moins de branches a explorer]
-```
-
-## 8. Le cache de dominance
-
-La classe [StateCache](src/solver/cache.py) compare les etats qui ont le meme profil de robots.
-
-```python
-state_key = (
-    state.time,
-    state.ore_robots,
-    state.clay_robots,
-    state.obsidian_robots,
-    state.geode_robots,
-    state.diamond_robots,
-)
-```
-
-### Regle de dominance
-
-Si deux etats ont:
-
-- le meme temps restant
-- le meme nombre de robots
-
-alors celui qui a le plus de ressources et le plus de diamonds domine l'autre.
-
-```mermaid
-flowchart LR
-    A[Etat A\nplus de ressources\nplus de diamonds] --> C[Dominant]
-    B[Etat B\nmoins bon] --> D[Elimine]
-    C --- E[meme robot profile]
-    D --- E
-```
-
-Le cache garde seulement la meilleure version connue pour cette combinaison de robots.
-
-## 9. Le solveur diamonds
-
-Le vrai moteur est [DiamondSolver](src/solver/diamond_solver.py).
+Le vrai moteur de recherche est [DiamondSolver](src/solver/diamond_solver.py). Pour respecter le principe **Dependency Inversion (DIP)**, la classe accepte l'injection d'une instance de cache via son constructeur :
 
 ```python
 class DiamondSolver:
-    def __init__(self, blueprint: Blueprint, max_time: int):
+    def __init__(self, blueprint: Blueprint, max_time: int, cache: Optional[StateCache] = None):
         self.blueprint = blueprint
         self.max_time = max_time
-        self.cache = StateCache()
+        self.cache = cache if cache is not None else StateCache()
         self.max_diamonds = 0
 ```
 
-### Pourquoi le nom change
+### La borne superieure (Évaluation / Pruning)
 
-Dans la version precedente, on maximisait les geodes.
-Ici, on maximise les diamonds.
-
-### La borne superieure
+La méthode de décision pour couper les branches inefficaces (`_is_hopeless`) est gérée de manière centrale par la classe `DiamondSolver` :
 
 ```python
-def is_hopeless(self, best_known_diamonds: int) -> bool:
-    max_possible = self.diamonds + self.diamond_robots * self.time + self.time * (self.time - 1) // 2
-    return max_possible <= best_known_diamonds
+def _is_hopeless(self, state: State) -> bool:
+    max_possible = (
+        state.resources.diamond 
+        + state.robots.diamond * state.time 
+        + state.time * (state.time - 1) // 2
+    )
+    return max_possible <= self.max_diamonds
 ```
 
 Cette formule suppose un cas parfait:
@@ -349,19 +280,23 @@ flowchart TD
     E -- oui --> G[Continuer]
 ```
 
-## 10. L'ordre de decision
+## 8. L'ordre de decision
 
-La methode [_search](src/solver/diamond_solver.py) suit un ordre tres precis.
+La methode `_search` du [DiamondSolver](src/solver/diamond_solver.py) suit un ordre très précis :
 
 ```python
 can_build_diamond = (
-    state.geode >= self.blueprint.diamond_robot_geode
-    and state.clay >= self.blueprint.diamond_robot_clay
-    and state.obsidian >= self.blueprint.diamond_robot_obsidian
+    state.resources.geode >= self.blueprint.diamond_robot_cost.geode
+    and state.resources.clay >= self.blueprint.diamond_robot_cost.clay
+    and state.resources.obsidian >= self.blueprint.diamond_robot_cost.obsidian
 )
 if can_build_diamond and not state.skipped[0]:
-    cost = (0, self.blueprint.diamond_robot_clay, self.blueprint.diamond_robot_obsidian, self.blueprint.diamond_robot_geode)
-    return self._search(state.next_state((0, 0, 0, 0, 1), cost))
+    return self._search(
+        state.next_state(
+            robot_diff=ResourcePack(diamond=1),
+            cost=self.blueprint.diamond_robot_cost
+        )
+    )
 ```
 
 ### Interpretration
@@ -379,16 +314,20 @@ flowchart TD
     D --> E
 ```
 
-## 11. Les autres choix possibles
+## 9. Les autres choix possibles
 
 Si on ne prend pas diamond immediatement, le solver explore les autres robots:
 
 ```python
 def _explore_other_choices(self, state: State, can_build_diamond: bool) -> int:
-    can_geode = state.geode_robots < self.blueprint.max_geode_cost and state.ore >= self.blueprint.geode_robot_ore and state.obsidian >= self.blueprint.geode_robot_obsidian
-    can_obsidian = state.obsidian_robots < self.blueprint.max_obsidian_cost and state.ore >= self.blueprint.obsidian_robot_ore and state.clay >= self.blueprint.obsidian_robot_clay
-    can_clay = state.clay_robots < self.blueprint.max_clay_cost and state.ore >= self.blueprint.clay_robot_ore
-    can_ore = state.ore_robots < self.blueprint.max_ore_cost and state.ore >= self.blueprint.ore_robot_ore
+    bp = self.blueprint
+    res = state.resources
+    rob = state.robots
+
+    can_geode = rob.geode < bp.max_geode_cost and res.ore >= bp.geode_robot_cost.ore and res.obsidian >= bp.geode_robot_cost.obsidian
+    can_obsidian = rob.obsidian < bp.max_obsidian_cost and res.ore >= bp.obsidian_robot_cost.ore and res.clay >= bp.obsidian_robot_cost.clay
+    can_clay = rob.clay < bp.max_clay_cost and res.ore >= bp.clay_robot_cost.ore
+    can_ore = rob.ore < bp.max_ore_cost and res.ore >= bp.ore_robot_cost.ore
 ```
 
 ### Ordre de priorite
@@ -418,9 +357,9 @@ Le tuple `skipped` empeche de revenir immediatement sur un choix qu'on vient de 
 
 ```python
 none_state = state.next_state(
-    (0, 0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (can_build_diamond, can_geode, can_obsidian, can_clay, can_ore)
+    robot_diff=ResourcePack(),
+    cost=ResourcePack(),
+    skipped_next=(can_build_diamond, can_geode, can_obsidian, can_clay, can_ore)
 )
 ```
 
@@ -430,6 +369,9 @@ En pratique:
 - alors la prochaine branche memorise ce fait
 - cela evite de tourner en rond avec les memes decisions
 
+**Explication technique (La logique de "Skip" dans le DFS) :**
+C'est une optimisation de *Pruning* cruciale. Si l'algorithme a choisi d'attendre (ne rien construire) à la minute T alors qu'il avait les ressources pour acheter un robot X, il s'interdit d'acheter ce même robot X à la minute T+1. Pourquoi ? Car s'il le voulait vraiment, il aurait dû l'acheter à la minute T pour commencer à produire une minute plus tôt ! La seule justification algorithmique valable pour attendre est de vouloir accumuler des ressources pour un robot plus cher. Le vecteur `skipped` implémente cette mémoire dans l'arbre d'exploration.
+
 ```mermaid
 flowchart LR
     A[Option disponible] --> B{Construire maintenant ?}
@@ -437,6 +379,74 @@ flowchart LR
     B -- non --> D[Branche attente]
     D --> E[Marque skipped]
     E --> F[Ne repasse pas sur le meme choix a l'identique]
+```
+
+## 10. Le cache de dominance (optimisation 1)
+
+La classe [StateCache](src/solver/cache.py) compare les etats qui ont le meme profil de robots. Pour lever l'ambiguïté des opérations de lecture-écriture et respecter le principe **Command-Query Separation (CQS)**, la méthode `check_and_update_dominance` gère les comparaisons :
+
+```python
+state_key = (state.time, state.robots)
+```
+
+### Regle de dominance
+
+Si deux etats ont:
+
+- le meme temps restant
+- le meme nombre de robots
+
+alors celui qui a le plus de ressources et le plus de diamonds domine l'autre.
+
+```mermaid
+flowchart LR
+    A[Etat A\nplus de ressources\nplus de diamonds] --> C[Dominant]
+    B[Etat B\nmoins bon] --> D[Elimine]
+    C --- E[meme robot profile]
+    D --- E
+```
+
+Le cache garde seulement la meilleure version connue pour cette combinaison de robots.
+
+**Explication technique (Caching & Dominance) :**
+Plutôt que d'explorer l'intégralité de l'arbre de recherche DFS (qui est de taille exponentielle), on utilise le principe de dominance et de mémorisation. Pour une minute donnée et un ensemble de robots donné, si l'on a déjà trouvé un état par le passé qui possédait des stocks *supérieurs ou égaux* à l'état actuel pour toutes les ressources, on coupe (*prune*) immédiatement cette branche. L'état actuel est considéré "dominé" et ne pourra mathématiquement jamais produire un meilleur résultat final.
+
+## 11. Pourquoi on coupe les stocks inutiles (optimisation 2)
+
+Le solver ne garde pas tous les etats possibles. Il limite les stocks pour la mise en cache. Pour respecter le principe **Single Responsibility (SRP)**, l'algorithme de calcul des stocks maximums est isolé dans la méthode privée `_get_capped_resources` de la classe [DiamondSolver](src/solver/diamond_solver.py) :
+
+```python
+def _get_capped_resources(self, state: State) -> ResourcePack:
+    def cap(value: int, max_cost: int, robots: int) -> int:
+        return min(value, max(0, max_cost * state.time - robots * (state.time - 1)))
+
+    bp = self.blueprint
+    return ResourcePack(
+        ore=cap(state.resources.ore, bp.max_ore_cost, state.robots.ore),
+        clay=cap(state.resources.clay, bp.max_clay_cost, state.robots.clay),
+        obsidian=cap(state.resources.obsidian, bp.max_obsidian_cost, state.robots.obsidian),
+        geode=cap(state.resources.geode, bp.max_geode_cost, state.robots.geode),
+    )
+```
+
+### Idee intuitive
+
+Si tu as deja beaucoup plus de ressources qu'il ne sera possible d'en depenser avant la fin, alors garder ce surplus ne change rien.
+
+Exemple:
+
+- si tu peux au maximum depenser 10 ore par minute
+- et qu'il reste peu de temps
+- alors avoir 500 ore n'apporte pas plus de possibilites que d'en avoir 50
+
+**Explication technique (Resource Capping) :**
+L'algorithme limite (plafonne) artificiellement les stocks de ressources représentés dans l'état via la fonction `_get_capped_resources`. Sans ce plafond, le Cache de dominance serait trompé : si un état A a 50 ore et un état B a 500 ore (alors qu'on ne peut mathématiquement en dépenser que 30 avant la fin), le Cache croirait que l'état B est "strictement meilleur" et forcerait l'algorithme à l'explorer. En plafonnant les deux états à 30 ore, le Cache réalise qu'ils sont en réalité équivalents en termes de potentiel. L'état B est donc reconnu comme n'apportant aucune valeur supplémentaire et la branche est immédiatement coupée (*pruned*).
+
+```mermaid
+flowchart TD
+    A[Stock actuel tres grand] --> B[Le cap le reduit]
+    B --> C[Etat plus compact]
+    C --> D[Moins de branches a explorer]
 ```
 
 ## 12. Comment le score est calcule
@@ -534,7 +544,14 @@ flowchart TD
 
 ## 16. L'API et l'Interface
 
-L'architecture a evolue pour proposer une interface graphique et une API REST avec FastAPI.
+L'architecture propose une interface graphique interactive et une API REST avec FastAPI.
+
+### Architecture Modulaire et Clean Code (Services)
+
+Pour se conformer au principe **Single Responsibility (SRP)**, le module de services [analyzer.py](src/services/analyzer.py) est divisé en trois classes distinctes :
+1. `FileRepository` : Se charge exclusivement de l'accès au système de fichiers (lecture/écriture).
+2. `ReportFormatter` : Gère le rendu et la mise en forme textuelle des rapports.
+3. `BlueprintAnalyzer` : Agit en tant que **Facade** orchestrant le processus d'analyse tout en conservant son ancienne signature statique intacte pour ne pas casser l'API REST existante.
 
 ### Structure API (`src/api/main.py`)
 
@@ -561,4 +578,4 @@ En cas d'erreur (fichier corrompu), il retourne un code HTTP 400 (Bad Request) a
 
 ### Interface Graphique (Next.js)
 
-Un frontend en React/Next.js (`frontend/src/app/page.tsx`) accompagne desormais l'application. Il permet a l'utilisateur de deposer en *Drag & Drop* le fichier `seed.txt` et affiche immediatement les scores recuperees par l'API FastAPI.
+Un frontend en React/Next.js (`frontend/src/app/page.tsx`) accompagne l'application. Il permet a l'utilisateur de deposer en *Drag & Drop* le fichier `seed.txt` et affiche immediatement les scores recuperes par l'API FastAPI.
