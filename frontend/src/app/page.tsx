@@ -49,14 +49,29 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server Error ${response.status}: ${errorText}`);
+        let errorMessage = `Server Error ${response.status}`;
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            try {
+              const errData = JSON.parse(errorText);
+              if (errData && errData.detail) {
+                errorMessage = errData.detail;
+              } else {
+                errorMessage = errorText;
+              }
+            } catch {
+              errorMessage = errorText;
+            }
+          }
+        } catch {}
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
       setResults(data);
-    } catch {
-      setError("An unexpected error occurred");
+    } catch (err: unknown) {
+      setError((err as Error).message || "An unexpected error occurred");
     } finally {
       setLoading(false);
     }

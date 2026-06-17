@@ -130,4 +130,14 @@ def test_blueprints_analyze_malformed_file():
             except Exception:
                 pass
 
+def test_serve_frontend():
+    response = client.get("/")
+    assert response.status_code in (200, 404)
+
+def test_upload_no_file():
+    # Calling /upload without file parameter
+    response = client.post("/upload")
+    assert response.status_code == 422
+
+
 
