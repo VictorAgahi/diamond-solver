@@ -27,9 +27,9 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 
 # Lancer l'API FastAPI
-uvicorn src.api.main:app --reload
+uvicorn src.api.main:app --port 4000 --reload
 ```
-L'API sera disponible sur [http://127.0.0.1:8000](http://127.0.0.1:8000).
+L'API sera disponible sur [http://127.0.0.1:4000](http://127.0.0.1:4000).
 
 ### 2. Démarrer le Frontend (Next.js)
 

@@ -6,8 +6,8 @@ test('drag and drop displays results', async ({ page }) => {
   // Wait for the h1 to ensure page load
   await expect(page.locator('h1')).toHaveText('Diamond Solver Pro');
   
-  // Mock the fetch to http://localhost:8000/upload
-  await page.route('http://localhost:8000/upload', async route => {
+  // Mock the fetch to http://localhost:4000/upload
+  await page.route('http://localhost:4000/upload', async route => {
     const json = { part1: 12345, part2: 67890 };
     await route.fulfill({ json });
   });

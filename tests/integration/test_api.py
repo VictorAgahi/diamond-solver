@@ -38,3 +38,32 @@ def test_upload_malformed_file():
     )
     assert response.status_code == 400
     assert "Error parsing line 1: Expected 10 integers" in response.json()["detail"]
+
+def test_blueprints_analyze():
+    import os
+    if os.path.exists("analysis.txt"):
+        try:
+            os.remove("analysis.txt")
+        except Exception:
+            pass
+
+    response = client.get("/blueprints/analyze")
+    assert response.status_code == 200
+    data = response.json()
+    assert "bestBlueprint" in data
+    assert "blueprints" in data
+    assert data["bestBlueprint"] == "2"
+    assert len(data["blueprints"]) == 2
+    assert data["blueprints"][0]["id"] == "1"
+    assert data["blueprints"][0]["quality"] == 3
+    assert data["blueprints"][1]["id"] == "2"
+    assert data["blueprints"][1]["quality"] == 6
+
+    # Verify analysis.txt exists and contains proper text
+    assert os.path.exists("analysis.txt")
+    with open("analysis.txt", "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "Blueprint 1: 3" in content
+    assert "Blueprint 2: 6" in content
+    assert "Best blueprint is the blueprint 2." in content
+
